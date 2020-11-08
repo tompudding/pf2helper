@@ -1,0 +1,13 @@
+{
+	"name": "pf2helper",
+	"title": "PF2 Helper",
+	"description": "Temporary hacks for me to test functionaility",
+	"version": "0.0.1",
+    "esmodules": [
+		"./pf2helper.js"
+	],
+    "socket": true,
+	"minimumCoreVersion" : "0.7.3",
+	"compatibleCoreVersion" : "0.7.3",
+	"author": "Tom G"
+}
