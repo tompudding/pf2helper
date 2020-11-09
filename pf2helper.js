@@ -10,6 +10,39 @@ Hooks.once('canvasReady', () => {
 
 });
 
+var skill_lookup = {
+    "aberration" : ['occultism'],
+    "animal"     : ['nature'],
+    "astral"     : ['occultism'],
+    "beast"      : ['arcana','nature'],
+    "celestial"  : ['religion'],
+    "construct"  : ['arcana','crafting'],
+    "dragon"     : ['arcana'],
+    "elemental"  : ['arcana','nature'],
+    "ethereal"   : ['occultism'],
+    "fey"        : ['nature'],
+    "fiend"      : ['religion'],
+    "fungus"     : ['nature'],
+    "humanoid"   : ['society'],
+    "monitor"    : ['religion'],
+    "ooze"       : ['occultism'],
+    "plant"      : ['nature'],
+    "spirit"     : ['occultism'],
+    "undead"     : ['religion'],
+}
+
+var dc_adjust = {
+    'none' : 0,
+    'incredibly-easy' : -10,
+    'very-easy' : -5,
+    'easy' : -2,
+    'hard' : +2,
+    'very-hard' : +5,
+    'incredibly-hard' : +10,
+};
+
+var level_dcs = [14, 15, 16, 18, 19, 20, 22, 23, 24, 26, 27, 28, 30, 31, 32, 34, 35, 36, 38, 39, 40, 42, 44, 46, 48, 50];
+
 async function update_token(token) {
     console.log(token.actor.data.data.token_num);
     if( token.actor.data.data.token_num > 0 ) {
@@ -64,6 +97,14 @@ function has_courage(token) {
             some(modifier => modifier.name === 'Inspire Courage'));
 }
 
+function has_know_weakness(token) {
+    if( !token || !token.actor || !token.actor.data.data.customModifiers ) {
+        return false;
+    }
+    return ((token.actor.data.data.customModifiers['attack'] || []).
+            some(modifier => modifier.name === 'Know Weakness'));
+}
+
 async function enable_inspire_courage(token) {
     let messageContent = '';
     let actor = token.actor;
@@ -114,8 +155,15 @@ class PF2Helper {
         this.bruce_sounds = ['born.ogg','fire1.ogg','fire2.ogg','young.ogg','young2.ogg'];
         this.bruce_index = Math.floor(Math.random() * this.bruce_sounds.length);
         this.stratagems = {};
+        this.known_crits = {};
+        this.current_knower = null;
         Hooks.on('diceSoNiceRollComplete', this.handle_roll.bind(this));
         game.socket.on('module.pf2helper', (request) => {
+            let token = null;
+            if( request.data.token_id ) {
+                token = canvas.tokens.objects.children.find( t => t.id == request.data.token_id );
+            }
+
             if( request.data.type == 'inspire' ) {
 
                 if( request.data.sound ) {
@@ -123,8 +171,16 @@ class PF2Helper {
                     this.play('sfx/bruce/' + request.data.sound);
                 }
                 if( game.user.isGM ) {
-                    let token = canvas.tokens.objects.children.find( t => t.id == request.data.token_id );
                     this.inspire_courage(request.data.actor, token, false);
+                }
+            }
+            else if( request.data.type == 'recall' ) {
+                if( game.user.isGM ) {
+                    let target = null;
+                    if( request.data.target_id ) {
+                        target = canvas.tokens.objects.children.find( t => t.id == request.data.target_id );
+                    }
+                    this.recall_knowledge(token, target, request.data.known_weakness);
                 }
             }
         });
@@ -210,10 +266,43 @@ class PF2Helper {
         }
     }
 
+    async enable_known_weakness(actor, token) {
+        for (let target_token of canvas.tokens.objects.children) {
+             if( target_token.data.disposition >= 1 ) {
+                 if( !target_token.actor || has_know_weakness(target_token) ) {
+                     continue;
+                 }
+
+                 await target_token.actor.addCustomModifier('attack', 'Know Weakness', 1, 'circumstance');
+                 let icon = "systems/pf2e/icons/conditions-2/status_powerup.png";
+                 if (!target_token.data.effects.includes(icon)) {
+                     target_token.toggleEffect(icon)
+                 }
+            }
+        }
+    }
+
+    async disable_known_weakness(token) {
+        let messageContent = '';
+        let actor = token.actor;
+        if(!has_know_weakness(token)) {
+            return;
+        }
+        await actor.removeCustomModifier('attack', 'Know Weakness');
+
+        let icon = "systems/pf2e/icons/conditions-2/status_powerup.png";
+
+        if (token.data.effects.includes(icon)) {
+            token.toggleEffect(icon)
+        }
+    }
+
+
     devise_stratagem(actor, token, result, message_id) {
         // we receive this call as soon as the chat message has been created, but we need to wait until the 3D
         // dice have finished before doing anything, so we just record the id and let the handle_roll function
         // deal with it when it comes in
+        console.log(`got new stratagem with id ${message_id}`);
         this.stratagems[message_id] = {actor : actor, token : token, result : result};
     }
 
@@ -243,6 +332,12 @@ class PF2Helper {
             // On Bruce's turn Inspire courage ends. TODO: Lingering composition. We probably want a duration
             // recorded on this and to simply decrement it here.
             await disable_all_inspire_courage(token);
+        }
+        if( this.current_knower == null || (this.current_knower && token.actor == this.current_knower) ) {
+            this.current_knower = null;
+            for (let target_token of canvas.tokens.objects.children) {
+                this.disable_known_weakness(target_token);
+            }
         }
     }
 
@@ -286,11 +381,6 @@ class PF2Helper {
         if( !game.user.isGM ) {
             return;
         }
-        //console.log(combat)
-        //console.log(update)
-        //console.log(options)
-        //console.log(user_id)
-        //console.log(combat.current.tokenId);
 
         // Anything that happens at the end of a turn, let's do that on the previous token
         if( combat.previous && combat.previous.round >= 1 && combat.previous.tokenId ) {
@@ -346,9 +436,16 @@ class PF2Helper {
         }
 
         if( this.stratagems.hasOwnProperty(id) ) {
+            console.log('bingo');
             let data = this.stratagems[id]
             await this.enable_stratagem(message, data.actor, data.token, data.result);
             delete this.stratagems[id];
+        }
+
+        if( this.known_crits.hasOwnProperty(id) ) {
+            await this.enable_known_weakness(this.known_crits[id].actor, this.known_crits[id].token);
+            this.current_knower = this.known_crits[id].actor;
+            delete this.known_crits[id];
         }
         let dice = message._roll.dice;
 
@@ -366,6 +463,222 @@ class PF2Helper {
         else if( result == 1 ) {
             this.play('sfx/fan_fumble1.mp3');
         }
+    }
+
+    // Roll a recall knowledge check for a player. Player's can request this, or we can roll it ourselves
+    recall_knowledge(token, target=null, known_weakness=false) {
+        // FYI: canvas.tokens.controlled is the selected tokens
+        // we send a message on the socket to the GM
+
+        if( !game.user.isGM ) {
+            let user_target = game.user.targets.values().next().value;
+
+            game.socket.emit('module.pf2helper', {
+                data : {
+                    type:'recall',
+                    token_id:token ? token.id : null,
+                    target_id:user_target ? user_target.id : null,
+                    known_weakness : known_weakness,
+                }
+            });
+            return;
+        }
+        else if( !target ) {
+            target = game.user.targets.values().next().value;
+        }
+        let actor = token.actor;
+        if( !actor ) {
+            return;
+        }
+        console.log(`Recall knowledge for ${actor.name}`);
+        if( target ) {
+            console.log(`Targetting ${target.actor.name}`);
+
+            let creature_type = null;
+            let creature_level = null;
+
+            // Get the type and level from the target
+            try {
+                creature_type = target.actor.data.data.details.creatureType.toLowerCase();
+            }
+            catch {}
+
+            try {
+                creature_level = target.actor.data.data.details.level.value;
+            }
+            catch {}
+
+            if( creature_type != null && creature_level != null ) {
+                return this.recall_knowledge_data(token, actor, creature_type, creature_level, known_weakness);
+            }
+        }
+        // Either there was no target or it didn't have the info we wanted, so ask the GM for that info
+        let chosen = false;
+        let actioned = false;
+        let dialog = new Dialog({
+            title: 'Recall Knowledge',
+            content: `
+    <div>Recall Knowledge Creature Type<div>
+    <hr/>
+    <form>
+      <div class="form-group">
+        <label>Creature Type:</label>
+        <select id="creature-type" name="creature-type">
+          <option value="aberration">Abberation</option>
+          <option value="animal">Animal</option>
+          <option value="astral">Astral</option>
+          <option value="beast">Beast</option>
+          <option value="celestial">Celestial</option>
+          <option value="construct">Construct</option>
+          <option value="dragon">Dragon</option>
+          <option value="elemental">Elemental</option>
+          <option value="ethereal">Ethereal</option>
+          <option value="fey">Fey</option>
+          <option value="fiend">Fiend</option>
+          <option value="fungus">Fungus</option>
+          <option value="humanoid">Humanoid</option>
+          <option value="monitor">Monitor</option>
+          <option value="ooze">Ooze</option>
+          <option value="plant">Plant</option>
+          <option value="spirit">Spirit</option>
+          <option value="undead">Undead</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Creature Level</label>
+        <input id="creature-level" name="creature-level" type="number"/>
+      </div>
+    </form>
+    `,
+            buttons: {
+                yes: {
+                    icon: "<i class='fas fa-check'></i>",
+                    label: "Select Skill",
+                    callback: (html) => {chosen = true;},
+                },
+                no: {
+                    icon: "<i class='fas fa-times'></i>",
+                    label: `Cancel`,
+                },
+            },
+            default: "Recall",
+            close: html => {
+                // Let's get the creature type and move onto the next stage
+                if( chosen && !actioned ) {
+                    actioned = true;
+                    let creature_type = html.find('[name="creature-type"]')[0].value;
+                    let creature_level = html.find('[name="creature-level"]')[0].value;
+                    console.log(`creature_type=${creature_type}`);
+                    console.log(`creature_level=${creature_level}`);
+                    this.recall_knowledge_data(token, actor, creature_type, creature_level, known_weakness);
+                }
+            }
+        }).render(true);
+    }
+
+    recall_knowledge_data(token, actor, creature_type, creature_level, known_weakness) {
+        // We want another dialog, this time with the skills that can be rolled, as well as the DC adjustment
+
+        let skills = skill_lookup[creature_type];
+
+        if( !skills ) {
+            console.log(`Error: unexpected creature type ${creature_type}`);
+            return;
+        }
+
+        // We now want to get all of the skills from the creature that are Lores or are in this list
+        let skill_options = [];
+
+        for( let skill_abr of Object.keys(actor.data.data.skills) ) {
+            let skill = actor.data.data.skills[skill_abr];
+            if( skills.includes(skill.name) || (skill.expanded && skill.expanded.type == 'lore') ) {
+                skill_options.push( {
+                    name : skill.name,
+                    abr : skill_abr,
+                    rank : skill.rank,
+                    modifier : skill.totalModifier
+                } );
+            }
+        }
+        if( skill_options.length == 0 ) {
+            ui.notifications.warn(`${actor.name} has no appropriate skills`);
+            return;
+        }
+        // That gives us the options, but we need to format the dialog
+        if( creature_level < 0 ) {
+            creature_level = 0;
+        }
+        let base_dc = level_dcs[creature_level];
+        let option_list = skill_options.map(data => `<option value="${data.abr}">${data.name} (+${data.modifier})</option>`).join("\n");
+        let chosen = false;
+        let actioned = false;
+        let dialog = new Dialog({
+            title: 'Recall Knowledge',
+            content: `
+    <div>Recall Knowledge Skill<div>
+    <hr/>
+    <form>
+      <div class="form-group">
+        <label>Creature Type:</label>
+        <select id="id-skill" name="id-skill">
+          ${option_list}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Difficulty Adjustment</label>
+        <select id="dc-adjust" name="dc-adjust">
+          <option value="none">None (0)</option>
+          <option value="incredibly-easy">Incredibly Easy ((-10)</option>
+          <option value="very-easy">Very Easy (-5)</option>
+          <option value="easy">Easy (-2)</option>
+          <option value="hard">Hard (uncommon) (+2)</option>
+          <option value="very-hard">Very Hard (rare) (+5)</option>
+          <option value="incredibly-hard">Incredibly Hard (+10)</option>
+        </select>
+    </form>
+    `,
+            buttons: {
+                yes: {
+                    icon: "<i class='fas fa-check'></i>",
+                    label: "Select Skill",
+                    callback: (html) => {chosen = true;},
+                },
+                no: {
+                    icon: "<i class='fas fa-times'></i>",
+                    label: `Cancel`,
+                },
+            },
+            default: "Recall",
+            close: html => {
+                if( chosen && !actioned ) {
+                    actioned = true;
+                    // Let's get the creature type and move onto the next stage
+                    let skill = html.find('[name="id-skill"]')[0].value;
+                    let adjust = html.find('[name="dc-adjust"]')[0].value;
+                    let dc = base_dc + dc_adjust[adjust];
+                    console.log(`skill=${skill}`);
+                    console.log(`adjust=${adjust}`);
+                    console.log(`dc=${dc}`);
+                    console.log(`known_weakness=${known_weakness}`);
+                    skill = actor.data.data.skills[skill];
+
+                    let check = new Roll(`1d20+${skill.totalModifier}`).roll();
+                    ChatMessage.create({
+                        speaker: {actor:actor},
+                        flavor: `<b>${actor.name} rolls a secret DC ${dc} ${skill.name} check</b>`,
+                        roll: check,
+                        blind: true,
+                        whisper: [game.user._id],
+                        type: CHAT_MESSAGE_TYPES.ROLL
+                    }).then(message => {
+                        if( known_weakness && (check.results[0] == 20 || check.total >= (dc + 10) ) ) {
+                            console.log('Got known weakness crit!');
+                            this.known_crits[message.id] = {actor:actor, token:token};
+                        }
+                    });
+                }
+            }
+        }).render(true);
     }
 
     play(name) {
