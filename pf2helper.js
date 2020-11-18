@@ -500,6 +500,7 @@ class PF2Helper {
             // Get the type and level from the target
             try {
                 creature_type = target.actor.data.data.details.creatureType.toLowerCase();
+                // TODO:if this isn't defined, check traits
             }
             catch {}
 
@@ -508,7 +509,8 @@ class PF2Helper {
             }
             catch {}
 
-            if( creature_type != null && creature_level != null ) {
+            //TODO: undefined?
+            if( creature_type && creature_level != null && creature_level != undefined ) {
                 return this.recall_knowledge_data(token, actor, creature_type, creature_level, known_weakness);
             }
         }
