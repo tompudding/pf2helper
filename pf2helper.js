@@ -157,6 +157,14 @@ class PF2Helper {
         this.stratagems = {};
         this.known_crits = {};
         this.current_knower = null;
+        // In 0.7.7 it looks like the combat has stopped showing previous correctly. In order to be able to
+        // catch things like adding people to initiative and ending turns correctly, I'll keep track of the
+        // current combat info myself
+        this.combat = {round : -1,
+                       turn : -1,
+                       num_tokens : 0,
+                       last_token : null,
+                      };
         Hooks.on('diceSoNiceRollComplete', this.handle_roll.bind(this));
         game.socket.on('module.pf2helper', (request) => {
             let token = null;
@@ -378,22 +386,36 @@ class PF2Helper {
     }
 
     async handle_combat(combat, update, options, user_id) {
-        if( !game.user.isGM ) {
+        if( !game.user.isGM || !combat || !combat.current || combat.turn < 0 ) {
             return;
         }
-
-        // Anything that happens at the end of a turn, let's do that on the previous token
-        if( combat.previous && combat.previous.round >= 1 && combat.previous.tokenId ) {
-            let last_token = canvas.tokens.objects.children.find(token => token.id == combat.previous.tokenId);
+        if( this.combat.num_tokens != combat.turns.length ) {
+            //this is presumably an update with new players or some dead or something
+            this.combat.round = combat.current.round;
+            this.combat.turn = combat.current.turn;
+            this.combat.num_tokens = combat.turns.length;
+            return;
+        }
+        if( this.combat.turn == combat.current.turn ) {
+            // Why did this happen?
+            return;
+        }
+        if( this.combat.last_token ) {
+            let last_token = canvas.tokens.objects.children.find(token => token.id == this.combat.last_token);
             if( last_token ) {
+                //console.log(`End turn on ${last_token.name}`);
                 await this.end_turn(last_token);
             }
         }
+        this.combat.round = combat.current.round;
+        this.combat.turn = combat.current.turn;
+        this.combat.last_token = combat.current.tokenId;
 
         // Next up, get the token correctly for players, and disable inspire courage on Bruce's turn
         if( combat.current && combat.current.round >= 1 && combat.current.tokenId ) {
             let token = canvas.tokens.objects.children.find(token => token.id == combat.current.tokenId)
             if( token ) {
+                //console.log(`Start turn on ${token.name}`)
                 await this.start_turn(token);
             }
         }
