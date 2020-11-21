@@ -480,7 +480,7 @@ class PF2Helper {
         let result = d20_results[0].values[0];
         if( result >= 20 ) {
             //Natty 20!
-            this.play('sfx/critical_threat.mp3');
+            this.play(message.user.isGM ? 'sfx/troy_roll.mp3' : 'sfx/critical_threat.mp3');
         }
         else if( result == 1 ) {
             this.play('sfx/fan_fumble1.mp3');
