@@ -526,6 +526,20 @@ class PF2Helper {
             }
             catch {}
 
+            if( !creature_type ) {
+                try {
+                    for(var trait of target.actor.data.data.traits.traits.value) {
+                        if(Object.keys(skill_lookup).includes(trait)) {
+                            creature_type = trait;
+                            break;
+                        }
+                    }
+                }
+                catch {
+                    console.log(`Failed to find matching trait for ${token.name}`);
+                }
+            }
+
             try {
                 creature_level = target.actor.data.data.details.level.value;
             }
@@ -639,11 +653,11 @@ class PF2Helper {
         let dialog = new Dialog({
             title: 'Recall Knowledge',
             content: `
-    <div>Recall Knowledge Skill<div>
+    <div>Recall Knowledge - ${creature_type}<div>
     <hr/>
     <form>
       <div class="form-group">
-        <label>Creature Type:</label>
+        <label>Skill:</label>
         <select id="id-skill" name="id-skill">
           ${option_list}
         </select>
