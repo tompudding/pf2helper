@@ -64,18 +64,27 @@ async function update_token(token) {
         await token.toggleEffect(icon);
     }
 
-    if( has_courage(token) ) {
-        console.log(`Setting courage on ${token.name}`);
-        let icon = "systems/pf2e/icons/conditions-2/status_hero.png";
-        if (!token.data.effects.includes(icon)) {
-            await token.toggleEffect(icon)
+    // For inspire courage it's a bit more complicated now, we want to remove all 3 possible icons
+    let courage = has_courage(token);
+    for(let i = 1; i < 4; i++) {
+        let icon = `modules/pf2helper/inspire_${i}.png`;
+        let required = courage == i;
+        if( required != token.data.effects.includes(icon) ) {
+            await token.toggleEffect(icon);
         }
-        // else {
-        //     // A simple refresh for everyone
-        //     console.log('Refresh');
-        //     token.update({effects:token.data.effects});
-        // }
     }
+    // if( has_courage(token) ) {
+    //     console.log(`Setting courage on ${token.name}`);
+    //     let icon = "systems/pf2e/icons/conditions-2/status_hero.png";
+    //     if (!token.data.effects.includes(icon)) {
+    //         await token.toggleEffect(icon)
+    //     }
+    //     // else {
+    //     //     // A simple refresh for everyone
+    //     //     console.log('Refresh');
+    //     //     token.update({effects:token.data.effects});
+    //     // }
+    // }
 }
 
 function pathfinder_distance(src, dst) {
@@ -90,11 +99,14 @@ function pathfinder_distance(src, dst) {
 }
 
 function has_courage(token) {
-    if( !token || !token.actor || !token.actor.data.data.customModifiers ) {
-        return false;
+    if( !token || !token.actor ) {
+        return 0;
     }
-    return ((token.actor.data.data.customModifiers['attack'] || []).
-            some(modifier => modifier.name === 'Inspire Courage'));
+    let result = token.actor.getFlag('pf2helper','inspire_courage');
+    if( result ) {
+        return result;
+    }
+    return 0;
 }
 
 function has_know_weakness(token) {
@@ -105,40 +117,61 @@ function has_know_weakness(token) {
             some(modifier => modifier.name === 'Know Weakness'));
 }
 
-async function enable_inspire_courage(token) {
+async function set_inspire_courage(token, value) {
     let messageContent = '';
     let actor = token.actor;
-    if(has_courage(token)) {
+    let current = has_courage(token);
+    if( value > 4 ) {
+        value = 4;
+    }
+    if( value == current ) {
         return;
     }
-    await actor.addCustomModifier('attack', 'Inspire Courage', 1, 'status');
-    await actor.addCustomModifier('damage', 'Inspire Courage', 1, 'status');
-    let icon = "systems/pf2e/icons/conditions-2/status_hero.png";
-    if (!token.data.effects.includes(icon)) {
-        token.toggleEffect(icon)
-    }
-}
 
-async function disable_inspire_courage(token) {
-    let messageContent = '';
-    let actor = token.actor;
-    if(!has_courage(token)) {
+    await token.actor.setFlag('pf2helper','inspire_courage', value);
+    if( current ) {
+        //We're changing the value, so we need to turn off any current icon
+        let current_icon = `modules/pf2helper/inspire_${current}.png`;
+        if (token.data.effects.includes(current_icon)) {
+            await token.toggleEffect(current_icon)
+        }
+    }
+
+    if( value == 0 ) {
+        // We're just turning it off, so we need to remove the bonus and we're done!
+        await actor.removeCustomModifier('attack', 'Inspire Courage');
+        await actor.removeCustomModifier('damage', 'Inspire Courage');
         return;
     }
-    await actor.removeCustomModifier('attack', 'Inspire Courage');
-    await actor.removeCustomModifier('damage', 'Inspire Courage');
 
-    let icon = "systems/pf2e/icons/conditions-2/status_hero.png";
+    //If we get here it means we're turning on some kind of bonus
+    if( current == 0 ) {
+        // No current value means we need to add the modifier
+        await actor.addCustomModifier('attack', 'Inspire Courage', 1, 'status');
+        await actor.addCustomModifier('damage', 'Inspire Courage', 1, 'status');
+    }
 
-    if (token.data.effects.includes(icon)) {
-        token.toggleEffect(icon)
+    let current_icon = `modules/pf2helper/inspire_${value}.png`;
+    if (!token.data.effects.includes(current_icon)) {
+        await token.toggleEffect(current_icon)
     }
 }
 
 async function disable_all_inspire_courage(token) {
     for (let target_token of canvas.tokens.objects.children) {
         if( target_token.data.disposition == token.data.disposition ) {
-            await disable_inspire_courage(target_token);
+            await set_inspire_courage(target_token, 0);
+        }
+    }
+}
+
+async function change_all_inspire_courage(token, diff) {
+    for (let target_token of canvas.tokens.objects.children) {
+        if( target_token.data.disposition == token.data.disposition ) {
+            let current_courage = has_courage(target_token);
+            if( current_courage ) {
+                await set_inspire_courage(target_token, current_courage + diff);
+            }
         }
     }
 }
@@ -155,6 +188,7 @@ class PF2Helper {
         this.bruce_sounds = ['born.ogg','fire1.ogg','fire2.ogg','young.ogg','young2.ogg'];
         this.bruce_index = Math.floor(Math.random() * this.bruce_sounds.length);
         this.stratagems = {};
+        this.lingering = {};
         this.known_crits = {};
         this.current_knower = null;
         // In 0.7.7 it looks like the combat has stopped showing previous correctly. In order to be able to
@@ -191,6 +225,11 @@ class PF2Helper {
                     this.recall_knowledge(token, target, request.data.known_weakness);
                 }
             }
+            else if( request.data.type == 'linger' ) {
+                if( game.user.isGM ) {
+                    this.lingering_composition(request.data.actor, token);
+                }
+            }
         });
         Hooks.on('createCombat', this.create_combat.bind(this));
         if( !game.user.isGM ) {
@@ -201,6 +240,14 @@ class PF2Helper {
         Hooks.on('createChatMessage', this.handle_chat.bind(this));
 
         this.handle_scene();
+    }
+
+    //helper functions for macros
+    async change_all_inspire_courage(diff) {
+        let bruce = canvas.tokens.objects.children.find(token => token.name.startsWith('Bruce'));
+        if( bruce ) {
+            await change_all_inspire_courage(bruce, diff);
+        }
     }
 
     async handle_scene() {
@@ -229,7 +276,25 @@ class PF2Helper {
         return out;
     }
 
-    async inspire_courage(actor, token, from_click=true) {
+    get_inspired_tokens(source) {
+        let inspired = [];
+
+        let grid_size = canvas.grid.size;
+        let grid_pos = {x:source.x / grid_size,
+                        y:source.y / grid_size};
+
+        for (let target_token of canvas.tokens.objects.children) {
+            let target_pos = {x : target_token.x / grid_size,
+                              y : target_token.y / grid_size};
+            let distance = pathfinder_distance(grid_pos, target_pos);
+            if( distance <= 12 && target_token.data.disposition >= 1 ) {
+                inspired.push(target_token);
+            }
+        }
+        return inspired;
+    }
+
+    async inspire_courage(actor, token, from_click=true, value=1) {
         console.log('***Inspire Courage!***');
 
         if( from_click ) {
@@ -259,19 +324,36 @@ class PF2Helper {
             return;
         }
 
-        let grid_size = canvas.grid.size;
-        let grid_pos = {x:token.x / grid_size,
-                        y:token.y / grid_size};
-
-        for (let target_token of canvas.tokens.objects.children) {
-            let target_pos = {x : target_token.x / grid_size,
-                              y : target_token.y / grid_size};
-            let distance = pathfinder_distance(grid_pos, target_pos);
-            if( distance <= 12 && target_token.data.disposition >= 1 ) {
-                console.log('bingo');
-                await enable_inspire_courage(target_token);
-            }
+        for(let target of this.get_inspired_tokens(token) ) {
+            await set_inspire_courage(target, value);
         }
+    }
+
+    async lingering_composition(actor, token) {
+        // This function is called when the player clicks their macro, and it needs to roll a performance
+        // check, then set up for inspire courage to be added when complete. We'll have the GM do it because
+        // users can't put icons on other people's tokens
+        if( !actor ) {
+            return;
+        }
+        if( !game.user.isGM ) {
+            game.socket.emit('module.pf2helper', {
+                data : {
+                    type:'linger',
+                    token_id:token ? token.id : null,
+                    actor_id:actor ? actor.id : null,
+                }
+            });
+            return;
+        }
+        let sound = this.get_bruce_sound();
+        this.play('sfx/bruce/' + sound);
+
+        //When we're the GM we need that nice roll
+        const options = actor.getRollOptions(['all', 'cha-based', 'skill-check', 'performance']);
+        actor.data.data.skills.prf.roll({}, options, roll => {
+            this.lingering[roll.message.id] = {actor : actor, token : token};
+        });
     }
 
     async enable_known_weakness(actor, token) {
@@ -339,7 +421,7 @@ class PF2Helper {
         if( token.actor.name.startsWith('Bruce ') ) {
             // On Bruce's turn Inspire courage ends. TODO: Lingering composition. We probably want a duration
             // recorded on this and to simply decrement it here.
-            await disable_all_inspire_courage(token);
+            await change_all_inspire_courage(token, -1);
         }
         if( this.current_knower == null || (this.current_knower && token.actor == this.current_knower) ) {
             this.current_knower = null;
@@ -403,7 +485,7 @@ class PF2Helper {
         if( this.combat.last_token ) {
             let last_token = canvas.tokens.objects.children.find(token => token.id == this.combat.last_token);
             if( last_token ) {
-                //console.log(`End turn on ${last_token.name}`);
+                console.log(`End turn on ${last_token.name}`);
                 await this.end_turn(last_token);
             }
         }
@@ -415,7 +497,7 @@ class PF2Helper {
         if( combat.current && combat.current.round >= 1 && combat.current.tokenId ) {
             let token = canvas.tokens.objects.children.find(token => token.id == combat.current.tokenId)
             if( token ) {
-                //console.log(`Start turn on ${token.name}`)
+                console.log(`Start turn on ${token.name}`)
                 await this.start_turn(token);
             }
         }
@@ -458,7 +540,6 @@ class PF2Helper {
         }
 
         if( this.stratagems.hasOwnProperty(id) ) {
-            console.log('bingo');
             let data = this.stratagems[id]
             await this.enable_stratagem(message, data.actor, data.token, data.result);
             delete this.stratagems[id];
@@ -468,6 +549,51 @@ class PF2Helper {
             await this.enable_known_weakness(this.known_crits[id].actor, this.known_crits[id].token);
             this.current_knower = this.known_crits[id].actor;
             delete this.known_crits[id];
+        }
+
+        if( this.lingering.hasOwnProperty(id) ) {
+            // First we need to establish what the DC was, which depends on the subjects. First find the
+            // highest level subject
+            let data = this.lingering[id];
+            let target_level = 1;
+            let target_tokens = this.get_inspired_tokens(data.token);
+            for( let target of target_tokens ) {
+                if( target.actor && target.actor.data.data.details.level.value > target_level ) {
+                    target_level = target.actor.data.data.details.level.value;
+                }
+            }
+            let dc = level_dcs[target_level] + dc_adjust.hard;
+            await ChatMessage.create({
+                speaker: {actor:data.actor},
+                content: `<b>Lingering Performance with DC ${dc}</b>`,
+            })
+
+            // How did they do? Crit_fail = 0, fail = 1, success = 2, crit = 3
+            let durations = [0, 1, 3, 4];
+            let result = 0;
+
+            if( message.roll.total >= dc + 10 ) {
+                result = 3;
+            }
+            else if( message.roll.total >= dc ) {
+                result = 2;
+            }
+            else if( message.roll.total > dc - 10 ) {
+                result = 1;
+            }
+
+            if( message.roll.results[0] == 20 ) {
+                result = Math.min(result + 1, 3);
+            }
+            else if( message.roll.results[0] == 1 ) {
+                result = Math.max(result - 1, 0);
+            }
+            let duration = durations[result];
+            for( let target of target_tokens ) {
+                await set_inspire_courage(target, duration);
+            }
+
+            delete this.lingering[id];
         }
         let dice = message._roll.dice;
 
@@ -700,6 +826,16 @@ class PF2Helper {
                     console.log(`known_weakness=${known_weakness}`);
                     skill = actor.data.data.skills[skill];
 
+                    // let options = actor.getRollOptions(['all', 'int-based', 'skill-check', skill.name]);
+                    // options.push('secret');
+                    // skill.roll({}, options, check => {
+                    //     if( known_weakness && (check.results[0] == 20 || check.total >= (dc + 10) ) ) {
+                    //         //Got a known weakness crit, but we don't
+                    //         this.known_crits[check.message.id] = {actor:actor, token:token};
+                    //     }
+                    //     //this.lingering[roll.message.id] = {actor : actor, token : token};
+                    // });
+
                     let check = new Roll(`1d20+${skill.totalModifier}`).roll();
                     ChatMessage.create({
                         speaker: {actor:actor},
@@ -710,7 +846,7 @@ class PF2Helper {
                         type: CHAT_MESSAGE_TYPES.ROLL
                     }).then(message => {
                         if( known_weakness && (check.results[0] == 20 || check.total >= (dc + 10) ) ) {
-                            console.log('Got known weakness crit!');
+                            //Got a known weakness crit, but we don't
                             this.known_crits[message.id] = {actor:actor, token:token};
                         }
                     });
