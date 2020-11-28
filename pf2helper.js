@@ -117,6 +117,17 @@ function has_know_weakness(token) {
             some(modifier => modifier.name === 'Know Weakness'));
 }
 
+function get_recall_knowledge_modifier(actor, skill_abr) {
+    let modifier = actor.data.data.skills[skill_abr].totalModifier;
+    let skill = actor.data.data.skills[skill_abr];
+    if( skill.rank == 0 && actor.data.items.find( item => item.name == 'Keen Recollection') ) {
+        // Investigator's with Keen Recollection add their level to untrained recall knowledge checks
+        modifier += actor.data.data.details.level.value;
+    }
+
+    return modifier;
+}
+
 async function set_inspire_courage(token, value) {
     let messageContent = '';
     let actor = token.actor;
@@ -226,6 +237,7 @@ class PF2Helper {
                 }
             }
             else if( request.data.type == 'linger' ) {
+                console.log('got linger');
                 if( game.user.isGM ) {
                     this.lingering_composition(request.data.actor, token);
                 }
@@ -333,10 +345,11 @@ class PF2Helper {
         // This function is called when the player clicks their macro, and it needs to roll a performance
         // check, then set up for inspire courage to be added when complete. We'll have the GM do it because
         // users can't put icons on other people's tokens
-        if( !actor ) {
+        if( !token || !token.actor ) {
             return;
         }
         if( !game.user.isGM ) {
+            console.log('emit linger');
             game.socket.emit('module.pf2helper', {
                 data : {
                     type:'linger',
@@ -346,12 +359,13 @@ class PF2Helper {
             });
             return;
         }
+        console.log('GM linger');
         let sound = this.get_bruce_sound();
-        this.play('sfx/bruce/' + sound);
+        this.play('sfx/bruce/' + sound, true);
 
         //When we're the GM we need that nice roll
-        const options = actor.getRollOptions(['all', 'cha-based', 'skill-check', 'performance']);
-        actor.data.data.skills.prf.roll({}, options, roll => {
+        const options = token.actor.getRollOptions(['all', 'cha-based', 'skill-check', 'performance']);
+        token.actor.data.data.skills.prf.roll({}, options, roll => {
             this.lingering[roll.message.id] = {actor : actor, token : token};
         });
     }
@@ -760,7 +774,7 @@ class PF2Helper {
                     name : skill.name,
                     abr : skill_abr,
                     rank : skill.rank,
-                    modifier : skill.totalModifier
+                    modifier : get_recall_knowledge_modifier(actor, skill_abr),
                 } );
             }
         }
@@ -824,6 +838,7 @@ class PF2Helper {
                     console.log(`adjust=${adjust}`);
                     console.log(`dc=${dc}`);
                     console.log(`known_weakness=${known_weakness}`);
+                    let modifier = get_recall_knowledge_modifier(actor, skill);
                     skill = actor.data.data.skills[skill];
 
                     // let options = actor.getRollOptions(['all', 'int-based', 'skill-check', skill.name]);
@@ -836,7 +851,7 @@ class PF2Helper {
                     //     //this.lingering[roll.message.id] = {actor : actor, token : token};
                     // });
 
-                    let check = new Roll(`1d20+${skill.totalModifier}`).roll();
+                    let check = new Roll(`1d20+${modifier}`).roll();
                     ChatMessage.create({
                         speaker: {actor:actor},
                         flavor: `<b>${actor.name} rolls a secret DC ${dc} ${skill.name} check</b>`,
@@ -855,7 +870,7 @@ class PF2Helper {
         }).render(true);
     }
 
-    play(name) {
+    play(name, for_all=false) {
         console.log(`Attempting to play ${name}`)
         if(this.playing) {
             console.log('Sound already playing, abort');
@@ -867,7 +882,7 @@ class PF2Helper {
         }
         console.log(`Using volume ${volume}`);
         this.playing = true;
-        let sound = AudioHelper.play({src:name, volume:volume});
+        let sound = AudioHelper.play({src:name, volume:volume}, for_all);
         sound.on('end', () => {
             console.log('Sound completed');
             this.playing = false;
