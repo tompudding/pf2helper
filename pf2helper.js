@@ -311,6 +311,10 @@ class PF2Helper {
 
         if( from_click ) {
             let sound = null;
+            if( !actor.data.items.find( item => item.name == 'Inspire Courage') ) {
+                this.play('sfx/family_fortunes.mp3');
+                return;
+            }
             if( !has_courage(token) ) {
                 sound = this.get_bruce_sound();
                 this.play('sfx/bruce/' + sound);
@@ -348,8 +352,11 @@ class PF2Helper {
         if( !token || !token.actor ) {
             return;
         }
+        if( !actor.data.items.find( item => item.name == 'Lingering Composition') ) {
+            this.play('sfx/family_fortunes.mp3');
+            return;
+        }
         if( !game.user.isGM ) {
-            console.log('emit linger');
             game.socket.emit('module.pf2helper', {
                 data : {
                     type:'linger',
@@ -359,7 +366,6 @@ class PF2Helper {
             });
             return;
         }
-        console.log('GM linger');
         let sound = this.get_bruce_sound();
         this.play('sfx/bruce/' + sound, true);
 
@@ -406,6 +412,10 @@ class PF2Helper {
         // we receive this call as soon as the chat message has been created, but we need to wait until the 3D
         // dice have finished before doing anything, so we just record the id and let the handle_roll function
         // deal with it when it comes in
+        if( !actor.data.items.find( item => item.name == 'Lingering Composition') ) {
+            this.play('sfx/family_fortunes.mp3');
+            return;
+        }
         console.log(`got new stratagem with id ${message_id}`);
         this.stratagems[message_id] = {actor : actor, token : token, result : result};
     }
