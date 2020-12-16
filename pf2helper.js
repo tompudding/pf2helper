@@ -352,7 +352,7 @@ class PF2Helper {
         if( !token || !token.actor ) {
             return;
         }
-        if( !actor.data.items.find( item => item.name == 'Lingering Composition') ) {
+        if( !token.actor.data.items.find( item => item.name == 'Lingering Composition') ) {
             this.play('sfx/family_fortunes.mp3');
             return;
         }
@@ -412,7 +412,7 @@ class PF2Helper {
         // we receive this call as soon as the chat message has been created, but we need to wait until the 3D
         // dice have finished before doing anything, so we just record the id and let the handle_roll function
         // deal with it when it comes in
-        if( !actor.data.items.find( item => item.name == 'Lingering Composition') ) {
+        if( !actor.data.items.find( item => item.name == 'Devise a Stratagem') ) {
             this.play('sfx/family_fortunes.mp3');
             return;
         }
