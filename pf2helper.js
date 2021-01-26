@@ -66,25 +66,19 @@ async function update_token(token) {
 
     // For inspire courage it's a bit more complicated now, we want to remove all 3 possible icons
     let courage = has_courage(token);
+    let defence = has_defence(token);
     for(let i = 1; i < 4; i++) {
         let icon = `modules/pf2helper/inspire_${i}.png`;
         let required = courage == i;
         if( required != token.data.effects.includes(icon) ) {
             await token.toggleEffect(icon);
         }
+        icon = `modules/pf2helper/defence_${i}.png`;
+        required = defence == i;
+        if( required != token.data.effects.includes(icon) ) {
+            await token.toggleEffect(icon);
+        }
     }
-    // if( has_courage(token) ) {
-    //     console.log(`Setting courage on ${token.name}`);
-    //     let icon = "systems/pf2e/icons/conditions-2/status_hero.png";
-    //     if (!token.data.effects.includes(icon)) {
-    //         await token.toggleEffect(icon)
-    //     }
-    //     // else {
-    //     //     // A simple refresh for everyone
-    //     //     console.log('Refresh');
-    //     //     token.update({effects:token.data.effects});
-    //     // }
-    // }
 }
 
 function pathfinder_distance(src, dst) {
@@ -98,15 +92,24 @@ function pathfinder_distance(src, dst) {
     return Math.floor(diff_small * 1.5) + (diff_big - diff_small);
 }
 
-function has_courage(token) {
+function has_inspire(token, type)
+{
     if( !token || !token.actor ) {
         return 0;
     }
-    let result = token.actor.getFlag('pf2helper','inspire_courage');
+    let result = token.actor.getFlag('pf2helper',type);
     if( result ) {
         return result;
     }
     return 0;
+}
+
+function has_courage(token) {
+    return has_inspire(token, 'inspire_courage');
+}
+
+function has_defence(token) {
+    return has_inspire(token, 'inspire_defence');
 }
 
 function has_know_weakness(token) {
@@ -128,10 +131,10 @@ function get_recall_knowledge_modifier(actor, skill_abr) {
     return modifier;
 }
 
-async function set_inspire_courage(token, value) {
+async function set_inspire(token, value, flag_name, token_stub, off, on) {
     let messageContent = '';
     let actor = token.actor;
-    let current = has_courage(token);
+    let current = has_inspire(token, flag_name);
     if( value > 4 ) {
         value = 4;
     }
@@ -139,32 +142,74 @@ async function set_inspire_courage(token, value) {
         return;
     }
 
-    await token.actor.setFlag('pf2helper','inspire_courage', value);
+    await token.actor.setFlag('pf2helper',flag_name, value);
     if( current ) {
         //We're changing the value, so we need to turn off any current icon
-        let current_icon = `modules/pf2helper/inspire_${current}.png`;
+        let current_icon = `${token_stub}${current}.png`;
         if (token.data.effects.includes(current_icon)) {
             await token.toggleEffect(current_icon)
         }
     }
 
     if( value == 0 ) {
+        await off(actor);
         // We're just turning it off, so we need to remove the bonus and we're done!
-        await actor.removeCustomModifier('attack', 'Inspire Courage');
-        await actor.removeCustomModifier('damage', 'Inspire Courage');
         return;
     }
 
     //If we get here it means we're turning on some kind of bonus
     if( current == 0 ) {
         // No current value means we need to add the modifier
-        await actor.addCustomModifier('attack', 'Inspire Courage', 1, 'status');
-        await actor.addCustomModifier('damage', 'Inspire Courage', 1, 'status');
+        await on(actor);
     }
 
-    let current_icon = `modules/pf2helper/inspire_${value}.png`;
+    let current_icon = `${token_stub}${value}.png`;;
     if (!token.data.effects.includes(current_icon)) {
         await token.toggleEffect(current_icon)
+    }
+}
+
+async function set_inspire_courage(token, value) {
+    await set_inspire(token, value, 'inspire_courage', 'modules/pf2helper/inspire_',
+                             async (actor) => {
+                                 await actor.removeCustomModifier('attack', 'Inspire Courage');
+                                 await actor.removeCustomModifier('damage', 'Inspire Courage');
+                             },
+                             async (actor) => {
+                                 await actor.addCustomModifier('attack', 'Inspire Courage', 1, 'status');
+                                 await actor.addCustomModifier('damage', 'Inspire Courage', 1, 'status');
+                             });
+    if( value > 0 ) {
+        // we'd better turn off other compositions if we just set this on
+        set_inspire_defence(token, 0);
+    }
+}
+
+async function set_inspire_defence(token, value) {
+    let name = 'Inspire Defence';
+    await set_inspire(
+        token, value, 'inspire_defence', 'modules/pf2helper/defence_',
+        async (actor) => {
+            await actor.removeCustomModifier('ac', name);
+            await actor.removeCustomModifier('saving-throw', 'Inspire Defence');
+            let resistances = actor.data.data.traits.dr.filter(e => e.source != name);
+            await actor.update({'data.traits.dr':resistances});
+        },
+        async (actor) => {
+            let char_level = actor.data.data.details.level.value;
+            let spell_level = (char_level + 1) >> 1;
+            await actor.addCustomModifier('ac', 'Inspire Defence', 1, 'status');
+            await actor.addCustomModifier('saving-throw', 'Inspire Defence', 1, 'status');
+            let resistances = actor.data.data.traits.dr.filter(e => e.source != name);
+            resistances.push({type:'physical',
+                              value:spell_level >> 1,
+                              exceptions:'',
+                              source:name});
+            await actor.update({'data.traits.dr':resistances});
+        });
+    if( value > 0 ) {
+        // we'd better turn off other compositions if we just set this on
+        set_inspire_courage(token, 0);
     }
 }
 
@@ -176,12 +221,24 @@ async function disable_all_inspire_courage(token) {
     }
 }
 
-async function change_all_inspire_courage(token, diff) {
+async function disable_all_inspire_defence(token) {
+    for (let target_token of canvas.tokens.objects.children) {
+        if( target_token.data.disposition == token.data.disposition ) {
+            await set_inspire_defence(target_token, 0);
+        }
+    }
+}
+
+async function change_all_inspire(token, diff) {
     for (let target_token of canvas.tokens.objects.children) {
         if( target_token.data.disposition == token.data.disposition ) {
             let current_courage = has_courage(target_token);
             if( current_courage ) {
                 await set_inspire_courage(target_token, current_courage + diff);
+            }
+            let current_defence = has_defence(target_token);
+            if( current_defence ) {
+                await set_inspire_defence(target_token, current_defence + diff);
             }
         }
     }
@@ -192,11 +249,20 @@ function choose(choices) {
   return choices[index];
 }
 
+function song_parts(stub, num) {
+    let parts = [];
+
+    for(var i = 1; i < num+1; i++) {
+        parts.push( `${stub}${i}.ogg` );
+    }
+    return parts;
+}
+
 class PF2Helper {
 
     constructor() {
         this.playing = false;
-        this.bruce_sounds = ['born.ogg','fire1.ogg','fire2.ogg','young.ogg','young2.ogg'];
+        this.bruce_sounds = [...song_parts('born',5), ...song_parts('fire', 8), ...song_parts('young',2)];
         this.bruce_index = Math.floor(Math.random() * this.bruce_sounds.length);
         this.stratagems = {};
         this.lingering = {};
@@ -224,7 +290,24 @@ class PF2Helper {
                     this.play('sfx/bruce/' + request.data.sound);
                 }
                 if( game.user.isGM ) {
-                    this.inspire_courage(request.data.actor, token, false);
+                    if( request.data.name == 'Inspire Courage' ) {
+                        this.inspire(request.data.actor,
+                                     token,
+                                     request.data.name,
+                                     has_courage,
+                                     set_inspire_courage,
+                                     disable_all_inspire_courage,
+                                     false);
+                    }
+                    else {
+                        this.inspire(request.data.actor,
+                                     token,
+                                     request.data.name,
+                                     has_defence,
+                                     set_inspire_defence,
+                                     disable_all_inspire_defence,
+                                     false);
+                    }
                 }
             }
             else if( request.data.type == 'recall' ) {
@@ -255,10 +338,10 @@ class PF2Helper {
     }
 
     //helper functions for macros
-    async change_all_inspire_courage(diff) {
+    async change_all_inspire(diff) {
         let bruce = canvas.tokens.objects.children.find(token => token.name.startsWith('Bruce'));
         if( bruce ) {
-            await change_all_inspire_courage(bruce, diff);
+            await change_all_inspire(bruce, diff);
         }
     }
 
@@ -306,16 +389,16 @@ class PF2Helper {
         return inspired;
     }
 
-    async inspire_courage(actor, token, from_click=true, value=1) {
+    async inspire(actor, token, name, check, set, disable, from_click=true, value=1) {
         console.log('***Inspire Courage!***');
 
         if( from_click ) {
             let sound = null;
-            if( !actor.data.items.find( item => item.name == 'Inspire Courage') ) {
+            if( !actor.data.items.find( item => item.name == name) ) {
                 this.play('sfx/family_fortunes.mp3');
                 return;
             }
-            if( !has_courage(token) ) {
+            if( !check(token) ) {
                 sound = this.get_bruce_sound();
                 this.play('sfx/bruce/' + sound);
             }
@@ -323,6 +406,7 @@ class PF2Helper {
             game.socket.emit('module.pf2helper', {
                 data : {
                     type:'inspire',
+                    name:name,
                     token_id:token ? token.id : null,
                     actor_id:actor ? actor.id : null,
                     sound : sound,
@@ -335,17 +419,27 @@ class PF2Helper {
         }
 
         // If it's already on, turn it off for everyone
-        if( has_courage(token) ) {
-            await disable_all_inspire_courage(token)
+        if( check(token) ) {
+            await disable(token)
             return;
         }
 
         for(let target of this.get_inspired_tokens(token) ) {
-            await set_inspire_courage(target, value);
+            await set(target, value);
         }
     }
 
-    async lingering_composition(actor, token) {
+    async inspire_courage(actor, token, from_click=true, value=1) {
+        console.log('***Inspire Courage!***');
+        return this.inspire(actor, token, 'Inspire Courage', has_courage, set_inspire_courage, disable_all_inspire_courage, from_click, value);
+    }
+
+    async inspire_defence(actor, token, from_click=true, value=1) {
+        console.log('***Inspire Defence!***');
+        return this.inspire(actor, token, 'Inspire Defense', has_defence, set_inspire_defence, disable_all_inspire_defence, from_click, value);
+    }
+
+    async lingering_composition(actor, token, perf_type) {
         // This function is called when the player clicks their macro, and it needs to roll a performance
         // check, then set up for inspire courage to be added when complete. We'll have the GM do it because
         // users can't put icons on other people's tokens
@@ -360,6 +454,7 @@ class PF2Helper {
             game.socket.emit('module.pf2helper', {
                 data : {
                     type:'linger',
+                    perf_type:perf_type,
                     token_id:token ? token.id : null,
                     actor_id:actor ? actor.id : null,
                 }
@@ -372,7 +467,7 @@ class PF2Helper {
         //When we're the GM we need that nice roll
         const options = token.actor.getRollOptions(['all', 'cha-based', 'skill-check', 'performance']);
         token.actor.data.data.skills.prf.roll({}, options, roll => {
-            this.lingering[roll.message.id] = {actor : actor, token : token};
+            this.lingering[roll.message.id] = {actor : actor, token : token, perf_type : perf_type};
         });
     }
 
@@ -443,9 +538,7 @@ class PF2Helper {
             update_token(token);
         }
         if( token.actor.name.startsWith('Bruce ') ) {
-            // On Bruce's turn Inspire courage ends. TODO: Lingering composition. We probably want a duration
-            // recorded on this and to simply decrement it here.
-            await change_all_inspire_courage(token, -1);
+            await change_all_inspire(token, -1);
         }
         if( this.current_knower == null || (this.current_knower && token.actor == this.current_knower) ) {
             this.current_knower = null;
@@ -614,7 +707,12 @@ class PF2Helper {
             }
             let duration = durations[result];
             for( let target of target_tokens ) {
-                await set_inspire_courage(target, duration);
+                if( data.perf_type == 'courage' ) {
+                    await set_inspire_courage(target, duration);
+                }
+                else {
+                    await set_inspire_defence(target, duration);
+                }
             }
 
             delete this.lingering[id];
