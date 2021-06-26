@@ -484,6 +484,7 @@ class PF2Helper {
     }
 
     get_inspired_tokens(source) {
+        console.log(source);
         let inspired = [];
 
         let grid_size = canvas.grid.size;
@@ -982,6 +983,67 @@ class PF2Helper {
                 this.play('sfx/fan_fumble1.mp3');
             }
         }
+    }
+
+    set_inspire_value(token, flag_name, set) {
+        let chosen = false;
+        let actioned = false;
+        let current_duration = has_inspire(token, flag_name);
+        let current_amount = has_inspire(token, flag_name + '_amount');
+        let obj = this;
+
+        let dialog = new Dialog({
+            title: 'Set Inspire Courage',
+            content: `
+    <div>Level<div>
+    <hr/>
+    <form>
+      <div class="form-group">
+        <label>Duration</label>
+        <input id="duration" name="duration" type="number" value="${current_duration}"/>
+<label>Value</label>
+      </div>
+      <div class="form-group">
+      <label>Amount</label>
+        <input id="amount" name="amount" type="number" value="${current_amount}"/>
+      </div>
+    </form>
+    `,
+                buttons: {
+                    yes: {
+                        icon: "<i class='fas fa-check'></i>",
+                        label: "Update",
+                        callback: (html) => {chosen = true;},
+                    },
+                    no: {
+                        icon: "<i class='fas fa-times'></i>",
+                        label: `Cancel`,
+                    },
+                },
+                default: "Recall",
+            close: async function(html) {
+                    if( chosen && !actioned ) {
+                        actioned = true;
+                        let new_duration = html.find('[name="duration"]')[0].value;
+                        let new_amount = html.find('[name="amount"]')[0].value;
+                        console.log(`new_duration=${new_duration}`);
+                        console.log(`new_amount=${new_amount}`);
+                        //this.recall_knowledge_data(token, actor, creature_type, creature_level, known_weakness);
+                        if( new_amount != current_amount || new_duration != current_duration ) {
+                            let promise_array = [];
+                            for(let target of obj.get_inspired_tokens(token) ) {
+                                promise_array.push(set(target, new_duration, new_amount));
+                            }
+                            await Promise.all(promise_array);
+                        }
+                    }
+            }
+        }).render(true);
+
+    }
+
+    set_inspire_courage_value(token) {
+        return this.set_inspire_value(token, 'inspire_courage', set_inspire_courage);
     }
 
     // Roll a recall knowledge check for a player. Player's can request this, or we can roll it ourselves
