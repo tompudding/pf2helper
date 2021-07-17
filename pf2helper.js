@@ -126,7 +126,7 @@ async function update_token(token) {
             }
         }
         if( token.actor.data.data.customModifiers['ac'] ) {
-            mod = token.actor.data.data.customModifiers['ac'].find(modifier => modifier.name == 'Inspire Defence');
+            let mod = token.actor.data.data.customModifiers['ac'].find(modifier => modifier.name == 'Inspire Defence');
             if( mod ) {
                 defence_bonus = mod.modifier;
             }
@@ -883,10 +883,10 @@ class PF2Helper {
                     result = 1;
                 }
 
-                if( message.roll.results[0] == 20 ) {
+                if( message.roll.terms[0].results[0] == 20 ) {
                     result = Math.min(result + 1, 3);
                 }
-                else if( message.roll.results[0] == 1 ) {
+                else if( message.roll.terms[0].results[0] == 1 ) {
                     result = Math.max(result - 1, 0);
                 }
                 let duration = durations[result];
@@ -923,10 +923,10 @@ class PF2Helper {
                     result = 1;
                 }
 
-                if( message.roll.results[0] == 20 ) {
+                if( message.roll.terms[0].results[0] == 20 ) {
                     result = Math.min(result + 1, 3);
                 }
-                else if( message.roll.results[0] == 1 ) {
+                else if( message.roll.terms[0].results[0] == 1 ) {
                     result = Math.max(result - 1, 0);
                 }
                 let bonus = bonuses[result];
@@ -1024,8 +1024,8 @@ class PF2Helper {
             close: async function(html) {
                     if( chosen && !actioned ) {
                         actioned = true;
-                        let new_duration = html.find('[name="duration"]')[0].value;
-                        let new_amount = html.find('[name="amount"]')[0].value;
+                        let new_duration = parseInt(html.find('[name="duration"]')[0].value);
+                        let new_amount = parseInt(html.find('[name="amount"]')[0].value);
                         console.log(`new_duration=${new_duration}`);
                         console.log(`new_amount=${new_amount}`);
                         //this.recall_knowledge_data(token, actor, creature_type, creature_level, known_weakness);
@@ -1044,6 +1044,10 @@ class PF2Helper {
 
     set_inspire_courage_value(token) {
         return this.set_inspire_value(token, 'inspire_courage', set_inspire_courage);
+    }
+
+    set_inspire_defence_value(token) {
+        return this.set_inspire_value(token, 'inspire_defence', set_inspire_defence);
     }
 
     // Roll a recall knowledge check for a player. Player's can request this, or we can roll it ourselves
@@ -1263,7 +1267,7 @@ class PF2Helper {
                     // let options = actor.getRollOptions(['all', 'int-based', 'skill-check', skill.name]);
                     // options.push('secret');
                     // skill.roll({}, options, check => {
-                    //     if( known_weakness && (check.results[0] == 20 || check.total >= (dc + 10) ) ) {
+                    //     if( known_weakness && (check.terms[0].results[0] == 20 || check.total >= (dc + 10) ) ) {
                     //         //Got a known weakness crit, but we don't
                     //         this.known_crits[check.message.id] = {actor:actor, token:token};
                     //     }
@@ -1277,9 +1281,9 @@ class PF2Helper {
                         roll: check,
                         blind: true,
                         whisper: [game.user._id],
-                        type: CHAT_MESSAGE_TYPES.ROLL
+                        type: CONST.CHAT_MESSAGE_TYPES.ROLL
                     }).then(message => {
-                        if( known_weakness && (check.results[0] == 20 || check.total >= (dc + 10) ) ) {
+                        if( known_weakness && (check.terms[0].results[0] == 20 || check.total >= (dc + 10) ) ) {
                             //Got a known weakness crit, but we don't
                             this.known_crits[message.id] = {actor:actor, token:token};
                         }
@@ -1301,11 +1305,15 @@ class PF2Helper {
         }
         console.log(`Using volume ${volume}`);
         this.playing = true;
-        let sound = AudioHelper.play({src:name, volume:volume}, for_all);
-        sound.on('end', () => {
-            console.log('Sound completed');
-            this.playing = false;
-        });
+        let obj = this;
+        AudioHelper.play({src:name, volume:volume}, for_all).then(
+            function(sound) {
+                sound.on('end', () => {
+                    console.log('Sound completed');
+                    obj.playing = false;
+                });
+            }
+        );
     }
 
 }
