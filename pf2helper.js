@@ -256,7 +256,47 @@ async function set_inspire(token, duration, amount, flag_name, token_stub, off, 
         let current_plus = `${plus_stub}${amount}.png`;
         await token.toggleEffect(current_plus);
     }
+}
 
+var effects = {
+    'inspire_courage' : { 1 : { 1 : 'beReeFroAx24hj83', // duration 1, amount 1 = inspire courage
+                                2 : '', // duration 1, amount 2 = inspire heroic courage success
+                                3 : '', // duration 1, amount 3 = inspire heroic courage crit success
+                              },
+                          3 : { 1 : '', // duration 3, amount 1 = lingering courage success}
+                              },
+                          4 : { 1 : '', // duration 4, amount 1 = lingering courage crit success
+                              },
+                        },
+    'inspire_defence' : { 1 : { 1 : 'beReeFroAx24hj83', // duration 1, amount 1 = inspire courage
+                                2 : '', // duration 1, amount 2 = inspire heroic courage success
+                                3 : '', // duration 1, amount 3 = inspire heroic courage crit success
+                              },
+                          3 : { 1 : '', // duration 3, amount 1 = lingering courage success}
+                              },
+                          4 : { 1 : '', // duration 4, amount 1 = lingering courage crit success
+                              },
+                        }
+};
+
+async function set_inspire_new(token, duration, amount, flag_name, token_stub, off, on) {
+
+    console.log(`set flag_name=${flag_name} token_stub=${token_stub} to amount=${amount} duration=${duration}`)
+    let uuid = effects[flag_name][duration][amount];
+    let actor = token.actor;
+    if( !uuid || !actor ) {
+        return;
+    }
+    uuid = 'Compendium.pf2e.spell-effects.' + uuid;
+
+    const source = (await fromUuid(uuid)).toObject();
+    source.flags.core ??= {};
+    source.flags.core.sourceId = uuid;
+
+    const existing = token.actor.itemTypes.effect.find((effect) => effect.getFlag('core', 'sourceId') === uuid);
+    if (!existing) {
+        await token.actor.createEmbeddedDocuments('Item', [source]);
+    }
 }
 
 async function set_inspire_courage(token, duration, amount) {
@@ -368,11 +408,11 @@ class PF2Helper {
         // In 0.7.7 it looks like the combat has stopped showing previous correctly. In order to be able to
         // catch things like adding people to initiative and ending turns correctly, I'll keep track of the
         // current combat info myself
-        this.combat = {round : -1,
-                       turn : -1,
-                       num_tokens : 0,
-                       last_token : null,
-                      };
+        // this.combat = {round : -1,
+        //                turn : -1,
+        //                num_tokens : 0,
+        //                last_token : null,
+        //               };
         Hooks.on('diceSoNiceRollComplete', this.handle_roll.bind(this));
         game.socket.on('module.pf2helper', (request) => {
             let token = null;
@@ -433,7 +473,9 @@ class PF2Helper {
         if( !game.user.isGM ) {
             return;
         }
-        Hooks.on('updateCombat', this.handle_combat.bind(this));
+        //Hooks.on('updateCombat', this.handle_combat.bind(this));
+        Hooks.on('pf2e.startTurn', this.start_turn.bind(this));
+        Hooks.on('pf2e.endTurn',this.end_turn.bind(this));
         Hooks.on("canvasReady", this.handle_scene.bind(this));
         Hooks.on('createChatMessage', this.handle_chat.bind(this));
 
@@ -603,9 +645,9 @@ class PF2Helper {
 
             //When we're the GM we need that nice roll
             const options = token.actor.getRollOptions(['all', 'cha-based', 'skill-check', 'performance']);
-            token.actor.data.data.skills.prf.roll({}, options, roll => {
+            token.actor.data.data.skills.prf.roll({options:options, callback:roll => {
                 obj.lingering[roll.message.id] = {actor : actor, token : token, perf_type : perf_type, dc: dc};
-            });
+            }});
         });
     }
 
@@ -652,9 +694,9 @@ class PF2Helper {
 
             //When we're the GM we need that nice roll
             const options = token.actor.getRollOptions(['all', 'cha-based', 'skill-check', 'performance']);
-            token.actor.data.data.skills.prf.roll({}, options, roll => {
+            token.actor.data.data.skills.prf.roll({options:options, callback:roll => {
                 obj.heroics[roll.message.id] = {actor : actor, token : token, perf_type : perf_type, dc: dc};
-            });
+            }});
         });
     }
 
@@ -720,13 +762,18 @@ class PF2Helper {
         }
     }
 
-    async start_turn(token) {
-        if( token.actor.data.data.reaction_used ) {
-            token.actor.update({'data.reaction_used':false});
-            token.actor.data.data.reaction_used = false;
+    async start_turn(combatant, bombat, user_id) {
+        let token = combatant.token;
+        let actor = token.actor;
+        if( !token || !actor ) {
+            return;
+        }
+        if( actor.data.data.reaction_used ) {
+            actor.update({'data.reaction_used':false});
+            actor.data.data.reaction_used = false;
             update_token(token);
         }
-        if( token.actor.name.startsWith('Bruce ') ) {
+        if( actor.name.startsWith('Bruce ') ) {
             await change_all_inspire(token, -1);
         }
         if( this.current_knower == null || (this.current_knower && token.actor == this.current_knower) ) {
@@ -737,7 +784,8 @@ class PF2Helper {
         }
     }
 
-    async end_turn(token) {
+    async end_turn(combatant, combat, user_id) {
+        let token = combatant.token;
         let actor = token.actor;
 
         if( !actor ) {
@@ -771,43 +819,56 @@ class PF2Helper {
                 })
             }
         }
+        for(let token of canvas.tokens.objects.children) {
+            if( !token || !token.actor ) {
+                continue;
+            }
+            game.pf2e.effectTracker.removeExpired(token.actor);
+        }
     }
 
-    async handle_combat(combat, update, options, user_id) {
-        if( !game.user.isGM || !combat || !combat.current || combat.turn < 0 ) {
-            return;
-        }
-        if( this.combat.num_tokens != combat.turns.length ) {
-            //this is presumably an update with new players or some dead or something
-            this.combat.round = combat.current.round;
-            this.combat.turn = combat.current.turn;
-            this.combat.num_tokens = combat.turns.length;
-            return;
-        }
-        if( this.combat.turn == combat.current.turn ) {
-            // Why did this happen?
-            return;
-        }
-        if( this.combat.last_token ) {
-            let last_token = canvas.tokens.objects.children.find(token => token.id == this.combat.last_token);
-            if( last_token ) {
-                console.log(`End turn on ${last_token.name}`);
-                await this.end_turn(last_token);
-            }
-        }
-        this.combat.round = combat.current.round;
-        this.combat.turn = combat.current.turn;
-        this.combat.last_token = combat.current.tokenId;
+    // async handle_combat(combat, update, options, user_id) {
+    //     if( !game.user.isGM || !combat || !combat.current || combat.turn < 0 ) {
+    //         return;
+    //     }
 
-        // Next up, get the token correctly for players, and disable inspire courage on Bruce's turn
-        if( combat.current && combat.current.round >= 1 && combat.current.tokenId ) {
-            let token = canvas.tokens.objects.children.find(token => token.id == combat.current.tokenId)
-            if( token ) {
-                console.log(`Start turn on ${token.name}`)
-                await this.start_turn(token);
-            }
-        }
-    }
+    //     if( this.combat.num_tokens != combat.turns.length ) {
+    //         //this is presumably an update with new players or some dead or something
+    //         this.combat.round = combat.current.round;
+    //         this.combat.turn = combat.current.turn;
+    //         this.combat.num_tokens = combat.turns.length;
+    //         return;
+    //     }
+    //     if( this.combat.turn == combat.current.turn ) {
+    //         // Why did this happen?
+    //         return;
+    //     }
+    //     // for(let token of canvas.tokens.objects.children) {
+    //     //     if( !token || !token.actor ) {
+    //     //         continue;
+    //     //     }
+    //     //     game.pf2e.effectTracker.removeExpired(token.actor);
+    //     // }
+    //     // if( this.combat.last_token ) {
+    //     //     let last_token = canvas.tokens.objects.children.find(token => token.id == this.combat.last_token);
+    //     //     if( last_token ) {
+    //     //         console.log(`End turn on ${last_token.name}`);
+    //     //         await this.end_turn(last_token);
+    //     //     }
+    //     // }
+    //     this.combat.round = combat.current.round;
+    //     this.combat.turn = combat.current.turn;
+    //     this.combat.last_token = combat.current.tokenId;
+
+    //     // Next up, get the token correctly for players, and disable inspire courage on Bruce's turn
+    //     if( combat.current && combat.current.round >= 1 && combat.current.tokenId ) {
+    //         let token = canvas.tokens.objects.children.find(token => token.id == combat.current.tokenId)
+    //         if( token ) {
+    //             console.log(`Start turn on ${token.name}`)
+    //             await this.start_turn(token);
+    //         }
+    //     }
+    // }
 
     async enable_stratagem(message, actor, token, result) {
         // The first thing will be to put that icon on the token. It's not trivial to do it in the macro
@@ -1266,13 +1327,13 @@ class PF2Helper {
 
                     // let options = actor.getRollOptions(['all', 'int-based', 'skill-check', skill.name]);
                     // options.push('secret');
-                    // skill.roll({}, options, check => {
+                    // skill.roll({options:options, callback:check => {
                     //     if( known_weakness && (check.terms[0].results[0] == 20 || check.total >= (dc + 10) ) ) {
                     //         //Got a known weakness crit, but we don't
                     //         this.known_crits[check.message.id] = {actor:actor, token:token};
                     //     }
                     //     //this.lingering[roll.message.id] = {actor : actor, token : token};
-                    // });
+                    // }});
 
                     let check = new Roll(`1d20+${modifier}`).roll();
                     ChatMessage.create({
