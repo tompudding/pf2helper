@@ -302,14 +302,19 @@ async function set_inspire_new(token, duration, amount, flag_name, token_stub, o
 async function set_inspire_courage(token, duration, amount) {
     console.log(`set inspire courage duration=${duration} amount=${amount}`);
     await set_inspire(token, duration, amount, 'inspire_courage', 'modules/pf2helper/inspire_',
-                             async (actor) => {
-                                 await actor.removeCustomModifier('attack', 'Inspire Courage');
-                                 await actor.removeCustomModifier('damage', 'Inspire Courage');
-                             },
-                             async (actor) => {
-                                 await actor.addCustomModifier('attack', 'Inspire Courage', amount, 'status');
-                                 await actor.addCustomModifier('damage', 'Inspire Courage', amount, 'status');
-                             });
+                      async (actor) => {
+                          try {
+                              await actor.removeCustomModifier('attack', 'Inspire Courage');
+                              await actor.removeCustomModifier('damage', 'Inspire Courage');
+                          }
+                          catch (err) {
+                              console.log('Failed to remove custom modifier');
+                          }
+                      },
+                      async (actor) => {
+                          await actor.addCustomModifier('attack', 'Inspire Courage', amount, 'status');
+                          await actor.addCustomModifier('damage', 'Inspire Courage', amount, 'status');
+                      });
 
 }
 
@@ -762,12 +767,13 @@ class PF2Helper {
         }
     }
 
-    async start_turn(combatant, bombat, user_id) {
-        let token = combatant.token;
+    async start_turn(combatant, combat, user_id) {
+        let token = canvas.tokens.get(combatant.token.id);
         let actor = token.actor;
         if( !token || !actor ) {
             return;
         }
+        console.log(combatant);
         if( actor.data.data.reaction_used ) {
             actor.update({'data.reaction_used':false});
             actor.data.data.reaction_used = false;
@@ -785,7 +791,7 @@ class PF2Helper {
     }
 
     async end_turn(combatant, combat, user_id) {
-        let token = combatant.token;
+        let token = canvas.tokens.get(combatant.token.id);
         let actor = token.actor;
 
         if( !actor ) {
@@ -798,18 +804,19 @@ class PF2Helper {
             return;
         }
 
-        let items = actor.data.items;
+        let items = actor.data.items.contents;
 
         // decrease any frightened on the token by 1
         for(let i = 0; i < items.length; i++) {
-
             if( items[i].type != 'condition' ) {
                 continue;
             }
 
             if( items[i].name == 'Frightened' ) {
-                token.statusEffectChanged = true;
-                await PF2eConditionManager.updateConditionValue(items[i]._id, token, items[i].data.value.value - 1);
+                console.log(items[i]);
+                //token.statusEffectChanged = true;
+                await game.pf2e.ConditionManager.updateConditionValue(items[i].id, token, items[i].value - 1);
+                //await game.pf2e.StatusEffects.setStatus(token, [{ name:'frightened', value: (items[i].value - 1).toString()}]);
             }
 
             if( items[i].name == 'Persistent Damage' ) {
