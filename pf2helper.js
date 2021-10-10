@@ -773,7 +773,7 @@ class PF2Helper {
         if( !token || !actor ) {
             return;
         }
-        console.log(combatant);
+        //console.log(combatant);
         if( actor.data.data.reaction_used ) {
             actor.update({'data.reaction_used':false});
             actor.data.data.reaction_used = false;
