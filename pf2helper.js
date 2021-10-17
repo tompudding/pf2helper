@@ -650,8 +650,8 @@ class PF2Helper {
 
             //When we're the GM we need that nice roll
             const options = token.actor.getRollOptions(['all', 'cha-based', 'skill-check', 'performance']);
-            token.actor.data.data.skills.prf.roll({options:options, callback:roll => {
-                obj.lingering[roll.message.id] = {actor : actor, token : token, perf_type : perf_type, dc: dc};
+            token.actor.data.data.skills.prf.roll({options:options, callback: function(roll,outcome,message) {
+                obj.lingering[message.id] = {actor : actor, token : token, perf_type : perf_type, dc: dc};
             }});
         });
     }
@@ -699,8 +699,8 @@ class PF2Helper {
 
             //When we're the GM we need that nice roll
             const options = token.actor.getRollOptions(['all', 'cha-based', 'skill-check', 'performance']);
-            token.actor.data.data.skills.prf.roll({options:options, callback:roll => {
-                obj.heroics[roll.message.id] = {actor : actor, token : token, perf_type : perf_type, dc: dc};
+            token.actor.data.data.skills.prf.roll({options:options, callback: function(roll,outcome,message) {
+                obj.heroics[message.id] = {actor : actor, token : token, perf_type : perf_type, dc: dc};
             }});
         });
     }
