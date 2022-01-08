@@ -258,31 +258,30 @@ async function set_inspire(token, duration, amount, flag_name, token_stub, off, 
     }
 }
 
-var effects = {
-    'inspire_courage' : { 1 : { 1 : 'beReeFroAx24hj83', // duration 1, amount 1 = inspire courage
-                                2 : '', // duration 1, amount 2 = inspire heroic courage success
-                                3 : '', // duration 1, amount 3 = inspire heroic courage crit success
-                              },
-                          3 : { 1 : '', // duration 3, amount 1 = lingering courage success}
-                              },
-                          4 : { 1 : '', // duration 4, amount 1 = lingering courage crit success
-                              },
+const effects = {
+    'inspire_courage' : { 1 : 'beReeFroAx24hj83', // duration 1, amount 1 = inspire courage
+                          2 : 'kZ39XWJA3RBDTnqG', // duration 1, amount 2 = inspire heroic courage success
+                          3 : 'VFereWC1agrwgzPL', // duration 1, amount 3 = inspire heroic courage crit success
                         },
-    'inspire_defence' : { 1 : { 1 : 'beReeFroAx24hj83', // duration 1, amount 1 = inspire courage
-                                2 : '', // duration 1, amount 2 = inspire heroic courage success
-                                3 : '', // duration 1, amount 3 = inspire heroic courage crit success
-                              },
-                          3 : { 1 : '', // duration 3, amount 1 = lingering courage success}
-                              },
-                          4 : { 1 : '', // duration 4, amount 1 = lingering courage crit success
-                              },
-                        }
+    'inspire_defence' :  { 1 : 'DLwTvjjnqs2sNGuG', // duration 1, amount 1 = inspire courage
+                           2 : 'Chol7ExtoN2T36mP', // duration 1, amount 2 = inspire heroic courage success
+                           3 : 'BKam63zT98iWMJH7', // duration 1, amount 3 = inspire heroic courage crit success
+                         },
 };
 
-async function set_inspire_new(token, duration, amount, flag_name, token_stub, off, on) {
+async function set_inspire_new(token, duration, amount, flag_name, token_stub) {
 
     console.log(`set flag_name=${flag_name} token_stub=${token_stub} to amount=${amount} duration=${duration}`)
-    let uuid = effects[flag_name][duration][amount];
+    // Firstly, let's make sure everything is turned off
+    for(var uuid of Object.values(effects[flag_name])) {
+        const existing = token.actor.itemTypes.effect.find((effect) => effect.getFlag('core', 'sourceId') === 'Compendium.pf2e.spell-effects.' + uuid);
+
+        if( existing ) {
+            await token.actor.deleteEmbeddedDocuments('Item', [existing.id])
+        }
+    }
+
+    uuid = effects[flag_name][amount];
     let actor = token.actor;
     if( !uuid || !actor ) {
         return;
@@ -293,6 +292,8 @@ async function set_inspire_new(token, duration, amount, flag_name, token_stub, o
     source.flags.core ??= {};
     source.flags.core.sourceId = uuid;
 
+    source.data.duration.value = duration;
+
     const existing = token.actor.itemTypes.effect.find((effect) => effect.getFlag('core', 'sourceId') === uuid);
     if (!existing) {
         await token.actor.createEmbeddedDocuments('Item', [source]);
@@ -301,45 +302,14 @@ async function set_inspire_new(token, duration, amount, flag_name, token_stub, o
 
 async function set_inspire_courage(token, duration, amount) {
     console.log(`set inspire courage duration=${duration} amount=${amount}`);
-    await set_inspire(token, duration, amount, 'inspire_courage', 'modules/pf2helper/inspire_',
-                      async (actor) => {
-                          try {
-                              await actor.removeCustomModifier('attack', 'Inspire Courage');
-                              await actor.removeCustomModifier('damage', 'Inspire Courage');
-                          }
-                          catch (err) {
-                              console.log('Failed to remove custom modifier');
-                          }
-                      },
-                      async (actor) => {
-                          await actor.addCustomModifier('attack', 'Inspire Courage', amount, 'status');
-                          await actor.addCustomModifier('damage', 'Inspire Courage', amount, 'status');
-                      });
+    await set_inspire_new(token, duration, amount, 'inspire_courage', 'modules/pf2helper/inspire_');
 
 }
 
 async function set_inspire_defence(token, duration, amount) {
     let name = 'Inspire Defence';
-    await set_inspire(
-        token, duration, amount, 'inspire_defence', 'modules/pf2helper/defence_',
-        async (actor) => {
-            await actor.removeCustomModifier('ac', name);
-            await actor.removeCustomModifier('saving-throw', 'Inspire Defence');
-            let resistances = actor.data.data.traits.dr.filter(e => e.source != name);
-            await actor.update({'data.traits.dr':resistances});
-        },
-        async (actor) => {
-            let char_level = actor.data.data.details.level.value;
-            let spell_level = (char_level + 1) >> 1;
-            await actor.addCustomModifier('ac', 'Inspire Defence', amount, 'status');
-            await actor.addCustomModifier('saving-throw', 'Inspire Defence', amount, 'status');
-            let resistances = actor.data.data.traits.dr.filter(e => e.source != name);
-            resistances.push({type:'physical',
-                              value:spell_level >> 1,
-                              exceptions:'',
-                              source:name});
-            await actor.update({'data.traits.dr':resistances});
-        });
+    await set_inspire_new(
+        token, duration, amount, 'inspire_defence', 'modules/pf2helper/defence_');
 
 }
 
@@ -779,9 +749,7 @@ class PF2Helper {
             actor.data.data.reaction_used = false;
             update_token(token);
         }
-        if( actor.name.startsWith('Bruce ') ) {
-            await change_all_inspire(token, -1);
-        }
+
         if( this.current_knower == null || (this.current_knower && token.actor == this.current_knower) ) {
             this.current_knower = null;
             for (let target_token of canvas.tokens.objects.children) {
@@ -819,12 +787,12 @@ class PF2Helper {
                 //await game.pf2e.StatusEffects.setStatus(token, [{ name:'frightened', value: (items[i].value - 1).toString()}]);
             }
 
-            if( items[i].name == 'Persistent Damage' ) {
-                await ChatMessage.create({
-                    speaker: {actor:actor},
-                    content: `<b>${actor.name} has persistent damage!</b>`,
-                })
-            }
+            // if( items[i].name == 'Persistent Damage' ) {
+            //     await ChatMessage.create({
+            //         speaker: {actor:actor},
+            //         content: `<b>${actor.name} has persistent damage!</b>`,
+            //     })
+            // }
         }
         for(let token of canvas.tokens.objects.children) {
             if( !token || !token.actor ) {
@@ -903,7 +871,8 @@ class PF2Helper {
 
         await actor.unsetFlag('pf2helper','stratagem');
         await actor.unsetFlag('pf2helper','devising');
-        await actor.unsetRollOption('all','devise-a-stratagem');
+        //await actor.unsetRollOption('all','devise-a-stratagem');
+        await actor.unsetFlag(game.system.id, `rollOptions.all.devise-a-stratagem`);
     }
 
     async handle_roll(id) {
@@ -1097,13 +1066,13 @@ class PF2Helper {
                         console.log(`new_duration=${new_duration}`);
                         console.log(`new_amount=${new_amount}`);
                         //this.recall_knowledge_data(token, actor, creature_type, creature_level, known_weakness);
-                        if( new_amount != current_amount || new_duration != current_duration ) {
+                        //if( new_amount != current_amount || new_duration != current_duration ) {
                             let promise_array = [];
                             for(let target of obj.get_inspired_tokens(token) ) {
                                 promise_array.push(set(target, new_duration, new_amount));
                             }
                             await Promise.all(promise_array);
-                        }
+                        //}
                     }
             }
         }).render(true);
