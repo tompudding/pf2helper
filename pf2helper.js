@@ -1311,19 +1311,20 @@ class PF2Helper {
                     //     //this.lingering[roll.message.id] = {actor : actor, token : token};
                     // }});
 
-                    let check = new Roll(`1d20+${modifier}`).roll();
-                    ChatMessage.create({
-                        speaker: {actor:actor},
-                        flavor: `<b>${actor.name} rolls a secret DC ${dc} ${skill.name} check</b>`,
-                        roll: check,
-                        blind: true,
-                        whisper: [game.user._id],
-                        type: CONST.CHAT_MESSAGE_TYPES.ROLL
-                    }).then(message => {
-                        if( known_weakness && (check.terms[0].results[0] == 20 || check.total >= (dc + 10) ) ) {
-                            //Got a known weakness crit, but we don't
-                            this.known_crits[message.id] = {actor:actor, token:token};
-                        }
+                    new Roll(`1d20+${modifier}`).roll().then(check => {
+                        ChatMessage.create({
+                            speaker: {actor:actor},
+                            flavor: `<b>${actor.name} rolls a secret DC ${dc} ${skill.name} check</b>`,
+                            roll: check,
+                            blind: true,
+                            whisper: [game.user._id],
+                            type: CONST.CHAT_MESSAGE_TYPES.ROLL
+                        }).then(message => {
+                            if( known_weakness && (check.terms[0].results[0] == 20 || check.total >= (dc + 10) ) ) {
+                                //Got a known weakness crit, but we don't
+                                this.known_crits[message.id] = {actor:actor, token:token};
+                            }
+                        });
                     });
                 }
             }
