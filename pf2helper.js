@@ -1004,20 +1004,22 @@ class PF2Helper {
             }
         }
 
-        for(var dice of d20_rolls) {
-            // we only want to trigger the crit / fumble on d20 rolls, so something with exactly one d20
-            let d20_results = dice.filter(die => die.faces == 20 && die.values.length == 1);
-            if( d20_results.length != 1 ) {
-                return;
-            }
+        if( !message.data.blind) {
+            for(var dice of d20_rolls) {
+                // we only want to trigger the crit / fumble on d20 rolls, so something with exactly one d20
+                let d20_results = dice.filter(die => die.faces == 20 && die.values.length == 1);
+                if( d20_results.length != 1 ) {
+                    return;
+                }
 
-            let result = d20_results[0].values[0];
-            if( result >= 20 ) {
-                //Natty 20!
-                this.play(message.user.isGM ? 'sfx/troy_roll.mp3' : 'sfx/critical_threat.mp3');
-            }
-            else if( result == 1 ) {
-                this.play('sfx/fan_fumble1.mp3');
+                let result = d20_results[0].values[0];
+                if( result >= 20 ) {
+                    //Natty 20!
+                    this.play(message.user.isGM ? 'sfx/troy_roll.mp3' : 'sfx/critical_threat.mp3');
+                }
+                else if( result == 1 ) {
+                    this.play('sfx/fan_fumble1.mp3');
+                }
             }
         }
     }
